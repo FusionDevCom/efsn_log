@@ -25,16 +25,17 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/FusionFoundation/efsn/common"
+	"github.com/FusionFoundation/efsn/common/hexutil"
+	"github.com/FusionFoundation/efsn/common/math"
+	"github.com/FusionFoundation/efsn/core/rawdb"
+	"github.com/FusionFoundation/efsn/core/state"
+	"github.com/FusionFoundation/efsn/core/types"
+	"github.com/FusionFoundation/efsn/crypto"
+	"github.com/FusionFoundation/efsn/ethdb"
+	"github.com/FusionFoundation/efsn/log"
+	"github.com/FusionFoundation/efsn/params"
+	"github.com/FusionFoundation/efsn/rlp"
 )
 
 //go:generate gencodec -type Genesis -field-override genesisSpecMarshaling -out gen_genesis.go
@@ -45,21 +46,29 @@ var errGenesisNoConfig = errors.New("genesis has no chain configuration")
 // Genesis specifies the header fields, state of a genesis block. It also defines hard
 // fork switch-over blocks through the chain configuration.
 type Genesis struct {
-	Config     *params.ChainConfig `json:"config"`
-	Nonce      uint64              `json:"nonce"`
-	Timestamp  uint64              `json:"timestamp"`
-	ExtraData  []byte              `json:"extraData"`
-	GasLimit   uint64              `json:"gasLimit"   gencodec:"required"`
-	Difficulty *big.Int            `json:"difficulty" gencodec:"required"`
-	Mixhash    common.Hash         `json:"mixHash"`
-	Coinbase   common.Address      `json:"coinbase"`
-	Alloc      GenesisAlloc        `json:"alloc"      gencodec:"required"`
+	Config           *params.ChainConfig `json:"config"`
+	Nonce            uint64              `json:"nonce"`
+	Timestamp        uint64              `json:"timestamp"`
+	ExtraData        []byte              `json:"extraData"`
+	GasLimit         uint64              `json:"gasLimit"   gencodec:"required"`
+	Difficulty       *big.Int            `json:"difficulty" gencodec:"required"`
+	Mixhash          common.Hash         `json:"mixHash"`
+	Coinbase         common.Address      `json:"coinbase"`
+	Alloc            GenesisAlloc        `json:"alloc"      gencodec:"required"`
+	TicketCreateInfo *TicketsCreate      `json:"ticketsCreate"`
 
 	// These fields are used for consensus tests. Please don't use them
 	// in actual genesis blocks.
 	Number     uint64      `json:"number"`
 	GasUsed    uint64      `json:"gasUsed"`
 	ParentHash common.Hash `json:"parentHash"`
+}
+
+// TicketsCreate wacom
+type TicketsCreate struct {
+	Owner common.Address `json:"owner"`
+	Count uint64         `json:"count"`
+	Time  uint64         `json:"time"`
 }
 
 // GenesisAlloc specifies the initial state that is part of the genesis block.
@@ -221,18 +230,40 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 // ToBlock creates the genesis block and writes state of a genesis specification
 // to the given database (or discards it if nil).
 func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
+
 	if db == nil {
 		db = ethdb.NewMemDatabase()
 	}
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(db))
 	for addr, account := range g.Alloc {
-		statedb.AddBalance(addr, account.Balance)
+		statedb.AddBalance(addr, common.SystemAssetID, account.Balance)
 		statedb.SetCode(addr, account.Code)
 		statedb.SetNonce(addr, account.Nonce)
 		for key, value := range account.Storage {
 			statedb.SetState(addr, key, value)
 		}
 	}
+
+	if g.TicketCreateInfo != nil {
+		var x uint64
+		for x = 0; x < g.TicketCreateInfo.Count; x++ {
+			from := g.TicketCreateInfo.Owner
+			hash := crypto.Keccak256Hash(new(big.Int).SetUint64(x).Bytes())
+			id := crypto.Keccak256Hash(from[:], hash[:])
+			ticket := common.Ticket{
+				ID:         id,
+				Owner:      g.TicketCreateInfo.Owner,
+				Height:     big.NewInt(0),
+				StartTime:  g.TicketCreateInfo.Time,
+				ExpireTime: g.TicketCreateInfo.Time + 30*24*3600,
+				Value:      common.TicketPrice(),
+			}
+			statedb.AddTicket(ticket)
+		}
+	}
+
+	statedb.GenAsset(common.SystemAsset)
+
 	root := statedb.IntermediateRoot(false)
 	head := &types.Header{
 		Number:     new(big.Int).SetUint64(g.Number),
@@ -301,11 +332,17 @@ func GenesisBlockForTesting(db ethdb.Database, addr common.Address, balance *big
 func DefaultGenesisBlock() *Genesis {
 	return &Genesis{
 		Config:     params.MainnetChainConfig,
-		Nonce:      66,
-		ExtraData:  hexutil.MustDecode("0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa"),
-		GasLimit:   5000,
-		Difficulty: big.NewInt(17179869184),
-		Alloc:      decodePrealloc(mainnetAllocData),
+		Nonce:      1,
+		ExtraData:  hexutil.MustDecode("0x0000000000000000000000000000000000000000000000000000000000000000000000010000000001020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+		GasLimit:   4700000,
+		Difficulty: big.NewInt(1),
+		Timestamp:  1545777181,
+		TicketCreateInfo: &TicketsCreate{
+			Owner: common.HexToAddress("0xd2452651834e8f0c19c9d85e0bf09fe99283dabc"),
+			Time:  1545777181,
+			Count: 1,
+		},
+		Alloc: decodePrealloc(mainnetAllocData),
 	}
 }
 
@@ -333,7 +370,7 @@ func DefaultRinkebyGenesisBlock() *Genesis {
 	}
 }
 
-// DeveloperGenesisBlock returns the 'geth --dev' genesis block. Note, this must
+// DeveloperGenesisBlock returns the 'efsn --dev' genesis block. Note, this must
 // be seeded with the
 func DeveloperGenesisBlock(period uint64, faucet common.Address) *Genesis {
 	// Override the default period to the user requested one
@@ -355,7 +392,7 @@ func DeveloperGenesisBlock(period uint64, faucet common.Address) *Genesis {
 			common.BytesToAddress([]byte{6}): {Balance: big.NewInt(1)}, // ECAdd
 			common.BytesToAddress([]byte{7}): {Balance: big.NewInt(1)}, // ECScalarMul
 			common.BytesToAddress([]byte{8}): {Balance: big.NewInt(1)}, // ECPairing
-			faucet: {Balance: new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(9))},
+			faucet:                           {Balance: new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(9))},
 		},
 	}
 }

@@ -21,17 +21,17 @@ import (
 	"context"
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/eth/downloader"
-	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/FusionFoundation/efsn/accounts"
+	"github.com/FusionFoundation/efsn/common"
+	"github.com/FusionFoundation/efsn/core"
+	"github.com/FusionFoundation/efsn/core/state"
+	"github.com/FusionFoundation/efsn/core/types"
+	"github.com/FusionFoundation/efsn/core/vm"
+	"github.com/FusionFoundation/efsn/eth/downloader"
+	"github.com/FusionFoundation/efsn/ethdb"
+	"github.com/FusionFoundation/efsn/event"
+	"github.com/FusionFoundation/efsn/params"
+	"github.com/FusionFoundation/efsn/rpc"
 )
 
 // Backend interface provides the common API services (that are provided by
@@ -73,6 +73,8 @@ type Backend interface {
 
 func GetAPIs(apiBackend Backend) []rpc.API {
 	nonceLock := new(AddrLocker)
+	ppapi := NewPrivateAccountAPI(apiBackend, nonceLock)
+	txapi := NewPublicTransactionPoolAPI(apiBackend, nonceLock)
 	return []rpc.API{
 		{
 			Namespace: "eth",
@@ -87,7 +89,7 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 		}, {
 			Namespace: "eth",
 			Version:   "1.0",
-			Service:   NewPublicTransactionPoolAPI(apiBackend, nonceLock),
+			Service:   txapi,
 			Public:    true,
 		}, {
 			Namespace: "txpool",
@@ -111,8 +113,28 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 		}, {
 			Namespace: "personal",
 			Version:   "1.0",
-			Service:   NewPrivateAccountAPI(apiBackend, nonceLock),
+			Service:   ppapi,
 			Public:    false,
+		}, {
+			Namespace: "fsn",
+			Version:   "1.0",
+			Service:   NewPublicFusionAPI(apiBackend),
+			Public:    true,
+		}, {
+			Namespace: "fsn",
+			Version:   "1.0",
+			Service:   NewPrivateFusionAPI(apiBackend, nonceLock, ppapi),
+			Public:    false,
+		}, {
+			Namespace: "fsntx",
+			Version:   "1.0",
+			Service:   NewFusionTransactionAPI(apiBackend, nonceLock, txapi),
+			Public:    false,
+		}, {
+			Namespace: "fsnbt",
+			Version:   "1.0",
+			Service:   NewPublicFusionAPI(apiBackend),
+			Public:    true,
 		},
 	}
 }

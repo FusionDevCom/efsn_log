@@ -19,18 +19,20 @@ package vm
 import (
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/FusionFoundation/efsn/common"
+	"github.com/FusionFoundation/efsn/core/types"
 )
 
 // StateDB is an EVM database for full state querying.
 type StateDB interface {
 	CreateAccount(common.Address)
 
-	SubBalance(common.Address, *big.Int)
-	AddBalance(common.Address, *big.Int)
-	GetBalance(common.Address) *big.Int
-
+	SubBalance(common.Address, common.Hash, *big.Int)
+	AddBalance(common.Address, common.Hash, *big.Int)
+	GetBalance(common.Hash, common.Address) *big.Int
+	SubTimeLockBalance(common.Address, common.Hash, *common.TimeLock)
+	AddTimeLockBalance(common.Address, common.Hash, *common.TimeLock)
+	GetTimeLockBalance(common.Hash, common.Address) *common.TimeLock
 	GetNonce(common.Address) uint64
 	SetNonce(common.Address, uint64)
 
@@ -62,6 +64,22 @@ type StateDB interface {
 	AddPreimage(common.Hash, []byte)
 
 	ForEachStorage(common.Address, func(common.Hash, common.Hash) bool)
+
+	GenNotation(common.Address) error
+	GetNotation(common.Address) uint64
+
+	GenAsset(common.Asset) error
+	UpdateAsset(common.Asset) error
+
+	AllTickets() map[common.Hash]common.Ticket
+	AddTicket(common.Ticket) error
+
+	AllAssets() map[common.Hash]common.Asset
+
+	AllSwaps() map[common.Hash]common.Swap
+	AddSwap(swap common.Swap) error
+	UpdateSwap(swap common.Swap) error
+	RemoveSwap(id common.Hash) error
 }
 
 // CallContext provides a basic interface for the EVM calling conventions. The EVM EVM

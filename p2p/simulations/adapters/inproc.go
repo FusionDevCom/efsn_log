@@ -23,13 +23,13 @@ import (
 	"net"
 	"sync"
 
-	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/node"
-	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/p2p/discover"
-	"github.com/ethereum/go-ethereum/p2p/simulations/pipes"
-	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/FusionFoundation/efsn/event"
+	"github.com/FusionFoundation/efsn/log"
+	"github.com/FusionFoundation/efsn/node"
+	"github.com/FusionFoundation/efsn/p2p"
+	"github.com/FusionFoundation/efsn/p2p/discover"
+	"github.com/FusionFoundation/efsn/p2p/simulations/pipes"
+	"github.com/FusionFoundation/efsn/rpc"
 )
 
 // SimAdapter is a NodeAdapter which creates in-memory simulation nodes and
@@ -179,7 +179,7 @@ func (sn *SimNode) Addr() []byte {
 
 // Node returns a discover.Node representing the SimNode
 func (sn *SimNode) Node() *discover.Node {
-	return discover.NewNode(sn.ID, net.IP{127, 0, 0, 1}, 30303, 30303)
+	return discover.NewNode(sn.ID, net.IP{127, 0, 0, 1}, 40404, 40404)
 }
 
 // Client returns an rpc.Client which can be used to communicate with the

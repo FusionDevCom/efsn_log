@@ -17,14 +17,21 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
+	"reflect"
+	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/params"
+	"github.com/FusionFoundation/efsn/common"
+	"github.com/FusionFoundation/efsn/core/types"
+	"github.com/FusionFoundation/efsn/core/vm"
+	"github.com/FusionFoundation/efsn/crypto"
+	"github.com/FusionFoundation/efsn/log"
+	"github.com/FusionFoundation/efsn/params"
+	"github.com/FusionFoundation/efsn/rlp"
 )
 
 var (
@@ -73,6 +80,8 @@ type Message interface {
 	Nonce() uint64
 	CheckNonce() bool
 	Data() []byte
+
+	AsTransaction() *types.Transaction
 }
 
 // IntrinsicGas computes the 'intrinsic gas' for a message with the given data.
@@ -151,7 +160,7 @@ func (st *StateTransition) useGas(amount uint64) error {
 
 func (st *StateTransition) buyGas() error {
 	mgval := new(big.Int).Mul(new(big.Int).SetUint64(st.msg.Gas()), st.gasPrice)
-	if st.state.GetBalance(st.msg.From()).Cmp(mgval) < 0 {
+	if st.state.GetBalance(common.SystemAssetID, st.msg.From()).Cmp(mgval) < 0 {
 		return errInsufficientBalanceForGas
 	}
 	if err := st.gp.SubGas(st.msg.Gas()); err != nil {
@@ -160,7 +169,7 @@ func (st *StateTransition) buyGas() error {
 	st.gas += st.msg.Gas()
 
 	st.initialGas = st.msg.Gas()
-	st.state.SubBalance(st.msg.From(), mgval)
+	st.state.SubBalance(st.msg.From(), common.SystemAssetID, mgval)
 	return nil
 }
 
@@ -210,6 +219,11 @@ func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bo
 	} else {
 		// Increment the nonce for the next transaction
 		st.state.SetNonce(msg.From(), st.state.GetNonce(sender.Address())+1)
+
+		if st.msg.To() != nil && *st.msg.To() == common.FSNCallAddress {
+			st.handleFsnCall()
+		}
+
 		ret, st.gas, vmerr = evm.Call(sender, st.to(), st.data, st.gas, st.value)
 	}
 	if vmerr != nil {
@@ -222,7 +236,7 @@ func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bo
 		}
 	}
 	st.refundGas()
-	st.state.AddBalance(st.evm.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice))
+	st.state.AddBalance(st.evm.Coinbase, common.SystemAssetID, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice))
 
 	return ret, st.gasUsed(), vmerr != nil, err
 }
@@ -237,7 +251,7 @@ func (st *StateTransition) refundGas() {
 
 	// Return ETH for remaining gas, exchanged at the original rate.
 	remaining := new(big.Int).Mul(new(big.Int).SetUint64(st.gas), st.gasPrice)
-	st.state.AddBalance(st.msg.From(), remaining)
+	st.state.AddBalance(st.msg.From(), common.SystemAssetID, remaining)
 
 	// Also return remaining gas to the block gas counter so it is
 	// available for the next transaction.
@@ -247,4 +261,372 @@ func (st *StateTransition) refundGas() {
 // gasUsed returns the amount of gas used up by the state transition.
 func (st *StateTransition) gasUsed() uint64 {
 	return st.initialGas - st.gas
+}
+
+func (st *StateTransition) handleFsnCall() error {
+
+	param := common.FSNCallParam{}
+	rlp.DecodeBytes(st.msg.Data(), &param)
+	switch param.Func {
+	case common.GenNotationFunc:
+		err := st.state.GenNotation(st.msg.From())
+		if err == nil {
+			st.addLog(common.GenNotationFunc, []byte{})
+		}
+		return err
+	case common.GenAssetFunc:
+		genAssetParam := common.GenAssetParam{}
+		rlp.DecodeBytes(param.Data, &genAssetParam)
+		asset := genAssetParam.ToAsset()
+		asset.ID = st.msg.AsTransaction().Hash()
+		asset.Owner = st.msg.From()
+		if err := st.state.GenAsset(asset); err != nil {
+			return err
+		}
+		st.state.AddBalance(st.msg.From(), asset.ID, asset.Total)
+		st.addLog(common.GenAssetFunc, genAssetParam, common.NewKeyValue("AssetID", asset.ID))
+		return nil
+	case common.SendAssetFunc:
+		sendAssetParam := common.SendAssetParam{}
+		rlp.DecodeBytes(param.Data, &sendAssetParam)
+		if st.state.GetBalance(sendAssetParam.AssetID, st.msg.From()).Cmp(sendAssetParam.Value) < 0 {
+			return fmt.Errorf("not enough asset")
+		}
+		st.state.SubBalance(st.msg.From(), sendAssetParam.AssetID, sendAssetParam.Value)
+		st.state.AddBalance(sendAssetParam.To, sendAssetParam.AssetID, sendAssetParam.Value)
+		st.addLog(common.SendAssetFunc, sendAssetParam, common.NewKeyValue("AssetID", sendAssetParam.AssetID))
+		return nil
+	case common.TimeLockFunc:
+		timeLockParam := common.TimeLockParam{}
+		rlp.DecodeBytes(param.Data, &timeLockParam)
+		if timeLockParam.Type == common.TimeLockToAsset {
+			if timeLockParam.StartTime > uint64(time.Now().Unix()) {
+				return fmt.Errorf("Start time must be more than now")
+			}
+			timeLockParam.EndTime = common.TimeLockForever
+		}
+		needValue := common.NewTimeLock(&common.TimeLockItem{
+			StartTime: timeLockParam.StartTime,
+			EndTime:   timeLockParam.EndTime,
+			Value:     new(big.Int).SetBytes(timeLockParam.Value.Bytes()),
+		})
+		switch timeLockParam.Type {
+		case common.AssetToTimeLock:
+			if st.state.GetBalance(timeLockParam.AssetID, st.msg.From()).Cmp(timeLockParam.Value) < 0 {
+				return fmt.Errorf("not enough asset")
+			}
+			st.state.SubBalance(st.msg.From(), timeLockParam.AssetID, timeLockParam.Value)
+			totalValue := common.NewTimeLock(&common.TimeLockItem{
+				StartTime: common.TimeLockNow,
+				EndTime:   common.TimeLockForever,
+				Value:     new(big.Int).SetBytes(timeLockParam.Value.Bytes()),
+			})
+			surplusValue := new(common.TimeLock).Sub(totalValue, needValue)
+			if !surplusValue.IsEmpty() {
+				st.state.AddTimeLockBalance(st.msg.From(), timeLockParam.AssetID, surplusValue)
+			}
+			st.state.AddTimeLockBalance(timeLockParam.To, timeLockParam.AssetID, needValue)
+			st.addLog(common.TimeLockFunc, timeLockParam, common.NewKeyValue("LockType", "AssetToTimeLock"), common.NewKeyValue("AssetID", timeLockParam.AssetID))
+			return nil
+		case common.TimeLockToTimeLock:
+			if st.state.GetTimeLockBalance(timeLockParam.AssetID, st.msg.From()).Cmp(needValue) < 0 {
+				return fmt.Errorf("not enough time lock balance")
+			}
+			st.state.SubTimeLockBalance(st.msg.From(), timeLockParam.AssetID, needValue)
+			st.state.AddTimeLockBalance(timeLockParam.To, timeLockParam.AssetID, needValue)
+			st.addLog(common.TimeLockFunc, timeLockParam, common.NewKeyValue("LockType", "TimeLockToTimeLock"), common.NewKeyValue("AssetID", timeLockParam.AssetID))
+			return nil
+		case common.TimeLockToAsset:
+			if st.state.GetTimeLockBalance(timeLockParam.AssetID, st.msg.From()).Cmp(needValue) < 0 {
+				return fmt.Errorf("not enough time lock balance")
+			}
+			st.state.SubTimeLockBalance(st.msg.From(), timeLockParam.AssetID, needValue)
+			st.state.AddBalance(timeLockParam.To, timeLockParam.AssetID, timeLockParam.Value)
+			st.addLog(common.TimeLockFunc, timeLockParam, common.NewKeyValue("LockType", "TimeLockToAsset"), common.NewKeyValue("AssetID", timeLockParam.AssetID))
+			return nil
+		}
+	case common.BuyTicketFunc:
+
+		from := st.msg.From()
+		height := st.evm.Context.BlockNumber
+		hash := st.evm.GetHash(height.Uint64() - 1)
+		id := crypto.Keccak256Hash(from[:], hash[:])
+
+		tickets := st.state.AllTickets()
+
+		if _, ok := tickets[id]; ok {
+			return fmt.Errorf("one block just can buy one ticket")
+		}
+
+		buyTicketParam := common.BuyTicketParam{}
+		rlp.DecodeBytes(param.Data, &buyTicketParam)
+
+		start := buyTicketParam.Start
+		end := buyTicketParam.End
+		value := common.TicketPrice()
+		needValue := common.NewTimeLock(&common.TimeLockItem{
+			StartTime: start,
+			EndTime:   end,
+			Value:     value,
+		})
+		useAsset := false
+		if st.state.GetTimeLockBalance(common.SystemAssetID, from).Cmp(needValue) < 0 {
+			if st.state.GetBalance(common.SystemAssetID, from).Cmp(value) < 0 {
+				return fmt.Errorf("not enough time lock or asset balance")
+			}
+			useAsset = true
+		}
+
+		if useAsset {
+			st.state.SubBalance(from, common.SystemAssetID, value)
+			totalValue := common.NewTimeLock(&common.TimeLockItem{
+				StartTime: common.TimeLockNow,
+				EndTime:   common.TimeLockForever,
+				Value:     value,
+			})
+			surplusValue := new(common.TimeLock).Sub(totalValue, needValue)
+			if !surplusValue.IsEmpty() {
+				st.state.AddTimeLockBalance(from, common.SystemAssetID, surplusValue)
+			}
+		} else {
+			st.state.SubTimeLockBalance(from, common.SystemAssetID, needValue)
+		}
+
+		ticket := common.Ticket{
+			ID:         id,
+			Owner:      from,
+			Height:     height,
+			StartTime:  buyTicketParam.Start,
+			ExpireTime: end,
+			Value:      value,
+		}
+		if err := st.state.AddTicket(ticket); err != nil {
+			return err
+		}
+		st.addLog(common.BuyTicketFunc, param.Data, common.NewKeyValue("Ticket", ticket.ID))
+		return nil
+	case common.AssetValueChangeFunc:
+		assetValueChangeParam := common.AssetValueChangeParam{}
+		rlp.DecodeBytes(param.Data, &assetValueChangeParam)
+		big0 := big.NewInt(0)
+		if (assetValueChangeParam.IsInc && assetValueChangeParam.Value.Cmp(big0) <= 0) || (!assetValueChangeParam.IsInc && assetValueChangeParam.Value.Cmp(big0) >= 0) {
+			fmt.Errorf("illegal operation")
+		}
+		assets := st.state.AllAssets()
+
+		asset, ok := assets[assetValueChangeParam.AssetID]
+		if !ok {
+			return fmt.Errorf("asset not found")
+		}
+
+		if !asset.CanChange {
+			return fmt.Errorf("asset can't inc or dec")
+		}
+
+		if asset.Owner != st.msg.From() {
+			return fmt.Errorf("must be change by onwer")
+		}
+
+		if assetValueChangeParam.IsInc {
+			st.state.AddBalance(assetValueChangeParam.To, assetValueChangeParam.AssetID, assetValueChangeParam.Value)
+			asset.Total = asset.Total.Add(asset.Total, assetValueChangeParam.Value)
+		} else {
+			if st.state.GetBalance(assetValueChangeParam.AssetID, assetValueChangeParam.To).Cmp(assetValueChangeParam.Value) < 0 {
+				return fmt.Errorf("not enough asset")
+			}
+			st.state.SubBalance(assetValueChangeParam.To, assetValueChangeParam.AssetID, assetValueChangeParam.Value)
+			asset.Total = asset.Total.Sub(asset.Total, assetValueChangeParam.Value)
+		}
+		err := st.state.UpdateAsset(asset)
+		if err == nil {
+			st.addLog(common.AssetValueChangeFunc, assetValueChangeParam, common.NewKeyValue("AssetID", assetValueChangeParam.AssetID))
+		}
+		return err
+	case common.MakeSwapFunc:
+		makeSwapParam := common.MakeSwapParam{}
+		rlp.DecodeBytes(param.Data, &makeSwapParam)
+		big0 := big.NewInt(0)
+		if makeSwapParam.MinFromAmount.Cmp(big0) <= 0 || makeSwapParam.MinToAmount.Cmp(big0) <= 0 || makeSwapParam.SwapSize.Cmp(big0) <= 0 {
+			return fmt.Errorf("MinFromAmount,MinToAmount and SwapSize must be ge 1")
+		}
+		total := new(big.Int).Mul(makeSwapParam.MinFromAmount, makeSwapParam.SwapSize)
+
+		start := makeSwapParam.FromStartTime
+		end := makeSwapParam.FromEndTime
+		needValue := common.NewTimeLock(&common.TimeLockItem{
+			StartTime: start,
+			EndTime:   end,
+			Value:     total,
+		})
+
+		if start == common.TimeLockNow && end == common.TimeLockForever {
+			if st.state.GetBalance(makeSwapParam.FromAssetID, st.msg.From()).Cmp(total) < 0 {
+				return fmt.Errorf("not enough from asset")
+			}
+		} else {
+			if st.state.GetTimeLockBalance(makeSwapParam.FromAssetID, st.msg.From()).Cmp(needValue) < 0 {
+				return fmt.Errorf("not enough time lock balance")
+			}
+		}
+
+		swap := common.Swap{
+			ID:            st.msg.AsTransaction().Hash(),
+			Owner:         st.msg.From(),
+			FromAssetID:   makeSwapParam.FromAssetID,
+			FromStartTime: makeSwapParam.FromStartTime,
+			FromEndTime:   makeSwapParam.FromEndTime,
+			MinFromAmount: makeSwapParam.MinFromAmount,
+			ToAssetID:     makeSwapParam.ToAssetID,
+			ToStartTime:   makeSwapParam.ToStartTime,
+			ToEndTime:     makeSwapParam.ToEndTime,
+			MinToAmount:   makeSwapParam.MinToAmount,
+			SwapSize:      makeSwapParam.SwapSize,
+			Targes:        makeSwapParam.Targes,
+			Time:          st.evm.Time,
+		}
+		if err := st.state.AddSwap(swap); err != nil {
+			return err
+		}
+		if start == common.TimeLockNow && end == common.TimeLockForever {
+			st.state.SubBalance(st.msg.From(), makeSwapParam.FromAssetID, total)
+		} else {
+			st.state.SubTimeLockBalance(st.msg.From(), makeSwapParam.FromAssetID, needValue)
+		}
+		st.addLog(common.MakeSwapFunc, makeSwapParam, common.NewKeyValue("SwapID", swap.ID))
+		return nil
+	case common.RecallSwapFunc:
+		recallSwapParam := common.RecallSwapParam{}
+		rlp.DecodeBytes(param.Data, &recallSwapParam)
+		swaps := st.state.AllSwaps()
+		swap, ok := swaps[recallSwapParam.SwapID]
+		if !ok {
+			return fmt.Errorf("Swap not found")
+		}
+
+		if swap.Owner != st.msg.From() {
+			return fmt.Errorf("Must be swap onwer can recall")
+		}
+
+		total := new(big.Int).Mul(swap.MinFromAmount, swap.SwapSize)
+		start := swap.FromStartTime
+		end := swap.FromEndTime
+		needValue := common.NewTimeLock(&common.TimeLockItem{
+			StartTime: start,
+			EndTime:   end,
+			Value:     total,
+		})
+
+		if err := st.state.RemoveSwap(swap.ID); err != nil {
+			return err
+		}
+		if start == common.TimeLockNow && end == common.TimeLockForever {
+			st.state.AddBalance(st.msg.From(), swap.FromAssetID, total)
+		} else {
+			st.state.AddTimeLockBalance(st.msg.From(), swap.FromAssetID, needValue)
+		}
+		st.addLog(common.RecallSwapFunc, recallSwapParam, common.NewKeyValue("SwapID", swap.ID))
+		return nil
+	case common.TakeSwapFunc:
+		takeSwapParam := common.TakeSwapParam{}
+		rlp.DecodeBytes(param.Data, &takeSwapParam)
+		swaps := st.state.AllSwaps()
+		swap, ok := swaps[takeSwapParam.SwapID]
+		if !ok {
+			return fmt.Errorf("Swap not found")
+		}
+		big0 := big.NewInt(0)
+		if swap.SwapSize.Cmp(takeSwapParam.Size) < 0 || takeSwapParam.Size.Cmp(big0) <= 0 {
+			return fmt.Errorf("SwapSize must le and Size must be ge 1")
+		}
+
+		fromTotal := new(big.Int).Mul(swap.MinFromAmount, takeSwapParam.Size)
+		fromStart := swap.FromStartTime
+		fromEnd := swap.FromEndTime
+		fromNeedValue := common.NewTimeLock(&common.TimeLockItem{
+			StartTime: fromStart,
+			EndTime:   fromEnd,
+			Value:     fromTotal,
+		})
+
+		toTotal := new(big.Int).Mul(swap.MinToAmount, takeSwapParam.Size)
+		toStart := swap.ToStartTime
+		toEnd := swap.ToEndTime
+		toNeedValue := common.NewTimeLock(&common.TimeLockItem{
+			StartTime: toStart,
+			EndTime:   toEnd,
+			Value:     toTotal,
+		})
+
+		if toStart == common.TimeLockNow && toEnd == common.TimeLockForever {
+			if st.state.GetBalance(swap.ToAssetID, st.msg.From()).Cmp(toTotal) < 0 {
+				return fmt.Errorf("not enough from asset")
+			}
+		} else {
+			if st.state.GetTimeLockBalance(swap.ToAssetID, st.msg.From()).Cmp(toNeedValue) < 0 {
+				return fmt.Errorf("not enough time lock balance")
+			}
+		}
+
+		if swap.SwapSize.Cmp(takeSwapParam.Size) == 0 {
+			if err := st.state.RemoveSwap(swap.ID); err != nil {
+				return err
+			}
+		} else {
+			swap.SwapSize = swap.SwapSize.Sub(swap.SwapSize, takeSwapParam.Size)
+			if err := st.state.UpdateSwap(swap); err != nil {
+				return err
+			}
+		}
+
+		if toStart == common.TimeLockNow && toEnd == common.TimeLockForever {
+			st.state.AddBalance(swap.Owner, swap.ToAssetID, toTotal)
+			st.state.SubBalance(st.msg.From(), swap.ToAssetID, toTotal)
+		} else {
+			st.state.AddTimeLockBalance(swap.Owner, swap.ToAssetID, toNeedValue)
+			st.state.SubTimeLockBalance(st.msg.From(), swap.ToAssetID, toNeedValue)
+		}
+
+		if fromStart == common.TimeLockNow && fromEnd == common.TimeLockForever {
+			st.state.AddBalance(st.msg.From(), swap.FromAssetID, fromTotal)
+		} else {
+			st.state.AddTimeLockBalance(st.msg.From(), swap.FromAssetID, fromNeedValue)
+		}
+
+		st.addLog(common.TakeSwapFunc, takeSwapParam, common.NewKeyValue("SwapID", swap.ID))
+		return nil
+	}
+	return fmt.Errorf("Unsupport")
+}
+
+func (st *StateTransition) addLog(typ common.FSNCallFunc, value interface{}, keyValues ...*common.KeyValue) {
+
+	t := reflect.TypeOf(value)
+	v := reflect.ValueOf(value)
+
+	maps := make(map[string]interface{})
+	if t.Kind() == reflect.Struct {
+		for i := 0; i < t.NumField(); i++ {
+			if v.Field(i).CanInterface() {
+				maps[t.Field(i).Name] = v.Field(i).Interface()
+			}
+		}
+	} else {
+		maps["Base"] = value
+	}
+
+	for i := 0; i < len(keyValues); i++ {
+		maps[keyValues[i].Key] = keyValues[i].Value
+	}
+
+	data, _ := json.Marshal(maps)
+
+	topic := common.Hash{}
+	topic[common.HashLength-1] = (uint8)(typ)
+
+	st.evm.StateDB.AddLog(&types.Log{
+		Address:     common.FSNCallAddress,
+		Topics:      []common.Hash{topic},
+		Data:        data,
+		BlockNumber: st.evm.BlockNumber.Uint64(),
+	})
 }

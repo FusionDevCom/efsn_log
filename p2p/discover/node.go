@@ -31,9 +31,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/secp256k1"
+	"github.com/FusionFoundation/efsn/common"
+	"github.com/FusionFoundation/efsn/crypto"
+	"github.com/FusionFoundation/efsn/crypto/secp256k1"
 )
 
 const NodeIDBits = 512
@@ -136,10 +136,10 @@ var incompleteNodeURL = regexp.MustCompile("(?i)^(?:enode://)?([0-9a-f]+)$")
 // query parameter "discport".
 //
 // In the following example, the node URL describes
-// a node with IP address 10.3.58.6, TCP listening port 30303
-// and UDP discovery port 30301.
+// a node with IP address 10.3.58.6, TCP listening port 40404
+// and UDP discovery port 40402.
 //
-//    enode://<hex node id>@10.3.58.6:30303?discport=30301
+//    enode://<hex node id>@10.3.58.6:40404?discport=40402
 func ParseNode(rawurl string) (*Node, error) {
 	if m := incompleteNodeURL.FindStringSubmatch(rawurl); m != nil {
 		id, err := HexID(m[1])
@@ -176,9 +176,12 @@ func parseComplete(rawurl string) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid host: %v", err)
 	}
-	if ip = net.ParseIP(host); ip == nil {
-		return nil, errors.New("invalid IP address")
+
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) < 1 {
+		return nil, errors.New("invalid host")
 	}
+	ip = ips[0]
 	// Ensure the IP is 4 bytes long for IPv4 addresses.
 	if ipv4 := ip.To4(); ipv4 != nil {
 		ip = ipv4

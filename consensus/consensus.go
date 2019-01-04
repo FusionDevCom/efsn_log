@@ -20,11 +20,11 @@ package consensus
 import (
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/FusionFoundation/efsn/common"
+	"github.com/FusionFoundation/efsn/core/state"
+	"github.com/FusionFoundation/efsn/core/types"
+	"github.com/FusionFoundation/efsn/params"
+	"github.com/FusionFoundation/efsn/rpc"
 )
 
 // ChainReader defines a small collection of methods needed to access the local
@@ -113,4 +113,12 @@ type PoW interface {
 
 	// Hashrate returns the current mining hashrate of a PoW consensus engine.
 	Hashrate() float64
+}
+
+// NoPow is a consensus engine based on proof-of-other.
+type NoPow interface {
+	Engine
+
+	// ConsensusData wacom
+	ConsensusData() []*big.Int
 }

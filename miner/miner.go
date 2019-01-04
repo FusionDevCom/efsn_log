@@ -19,18 +19,19 @@ package miner
 
 import (
 	"fmt"
+	"math/big"
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/eth/downloader"
-	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/params"
+	"github.com/FusionFoundation/efsn/common"
+	"github.com/FusionFoundation/efsn/consensus"
+	"github.com/FusionFoundation/efsn/core"
+	"github.com/FusionFoundation/efsn/core/state"
+	"github.com/FusionFoundation/efsn/core/types"
+	"github.com/FusionFoundation/efsn/eth/downloader"
+	"github.com/FusionFoundation/efsn/event"
+	"github.com/FusionFoundation/efsn/log"
+	"github.com/FusionFoundation/efsn/params"
 )
 
 // Backend wraps all methods required for mining.
@@ -135,6 +136,13 @@ func (self *Miner) HashRate() uint64 {
 		return uint64(pow.Hashrate())
 	}
 	return 0
+}
+
+func (self *Miner) ConsensusData() []*big.Int {
+	if noPow, ok := self.engine.(consensus.NoPow); ok {
+		return noPow.ConsensusData()
+	}
+	return nil
 }
 
 func (self *Miner) SetExtra(extra []byte) error {

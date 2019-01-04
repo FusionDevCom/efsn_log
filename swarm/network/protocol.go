@@ -24,13 +24,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/p2p/discover"
-	"github.com/ethereum/go-ethereum/p2p/protocols"
-	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/ethereum/go-ethereum/swarm/log"
-	"github.com/ethereum/go-ethereum/swarm/state"
+	"github.com/FusionFoundation/efsn/crypto"
+	"github.com/FusionFoundation/efsn/p2p"
+	"github.com/FusionFoundation/efsn/p2p/discover"
+	"github.com/FusionFoundation/efsn/p2p/protocols"
+	"github.com/FusionFoundation/efsn/rpc"
+	"github.com/FusionFoundation/efsn/swarm/log"
+	"github.com/FusionFoundation/efsn/swarm/state"
 )
 
 const (
@@ -421,7 +421,7 @@ func NewNodeIDFromAddr(addr Addr) discover.NodeID {
 func NewAddrFromNodeID(id discover.NodeID) *BzzAddr {
 	return &BzzAddr{
 		OAddr: ToOverlayAddr(id.Bytes()),
-		UAddr: []byte(discover.NewNode(id, net.IP{127, 0, 0, 1}, 30303, 30303).String()),
+		UAddr: []byte(discover.NewNode(id, net.IP{127, 0, 0, 1}, 40404, 40404).String()),
 	}
 }
 

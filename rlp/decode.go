@@ -213,6 +213,8 @@ func makeDecoder(typ reflect.Type, tags tags) (dec decoder, err error) {
 		return decodeString, nil
 	case kind == reflect.Slice || kind == reflect.Array:
 		return makeListDecoder(typ, tags)
+	case kind == reflect.Map:
+		return makeMapDecoder(typ)
 	case kind == reflect.Struct:
 		return makeStructDecoder(typ)
 	case kind == reflect.Ptr:
@@ -429,6 +431,48 @@ func decodeByteArray(s *Stream, val reflect.Value) error {
 	return nil
 }
 
+func makeMapDecoder(typ reflect.Type) (decoder, error) {
+	ktype := typ.Key()
+	vtype := typ.Elem()
+	ktypeinfo, err := cachedTypeInfo1(ktype, tags{})
+	if err != nil {
+		return nil, err
+	}
+	vtypeinfo, err := cachedTypeInfo1(vtype, tags{})
+	if err != nil {
+		return nil, err
+	}
+
+	dec := func(s *Stream, val reflect.Value) (err error) {
+		if _, err := s.List(); err != nil {
+			return wrapStreamError(err, val.Type())
+		}
+		newval := val
+		if val.IsNil() {
+			newval = reflect.MakeMap(val.Type())
+		}
+		var size uint64
+		size, err = s.uint(reflect.TypeOf(size).Bits())
+		if err != nil {
+			return wrapStreamError(err, val.Type())
+		}
+		for i := uint64(0); i < size; i++ {
+			nk := reflect.New(ktype).Elem()
+			if err = ktypeinfo.decoder(s, nk); err != nil {
+				return err
+			}
+			nv := reflect.New(vtype).Elem()
+			if err = vtypeinfo.decoder(s, nv); err != nil {
+				return err
+			}
+			newval.SetMapIndex(nk, nv)
+		}
+		val.Set(newval)
+		return wrapStreamError(s.ListEnd(), typ)
+	}
+	return dec, nil
+}
+
 func makeStructDecoder(typ reflect.Type) (decoder, error) {
 	fields, err := structFields(typ)
 	if err != nil {
@@ -556,6 +600,7 @@ const (
 	Byte Kind = iota
 	String
 	List
+	Map
 )
 
 func (k Kind) String() string {
@@ -566,6 +611,8 @@ func (k Kind) String() string {
 		return "String"
 	case List:
 		return "List"
+	case Map:
+		return "Map"
 	default:
 		return fmt.Sprintf("Unknown(%d)", k)
 	}

@@ -26,8 +26,9 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/crypto/sha3"
+	"github.com/FusionFoundation/efsn/common/hexutil"
+	"github.com/FusionFoundation/efsn/crypto/sha3"
+	"github.com/FusionFoundation/efsn/rlp"
 )
 
 // Lengths of hashes and addresses in bytes.
@@ -339,4 +340,290 @@ func (ma *MixedcaseAddress) ValidChecksum() bool {
 // Original returns the mixed-case input string
 func (ma *MixedcaseAddress) Original() string {
 	return ma.original
+}
+
+// FSNCallAddress wacom
+var FSNCallAddress = HexToAddress("0xffffffffffffffffffffffffffffffffffffffff")
+
+// TicketLogAddress wacom
+var TicketLogAddress = HexToAddress("0xfffffffffffffffffffffffffffffffffffffffe")
+
+// SystemAssetID wacom
+var SystemAssetID = HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+
+var (
+	// NotationKey wacom
+	NotationKey = []byte{0x01}
+	// AssetKey wacom
+	AssetKey = []byte{0x02}
+	// TicketKey wacom
+	TicketKey = []byte{0x03}
+	// SwapKey wacom
+	SwapKey = []byte{0x06} // 4 was the old
+)
+
+// FSNCallFunc wacom
+type FSNCallFunc uint8
+
+const (
+	// GenNotationFunc wacom
+	GenNotationFunc = iota
+	// GenAssetFunc wacom
+	GenAssetFunc
+	// SendAssetFunc wacom
+	SendAssetFunc
+	// TimeLockFunc wacom
+	TimeLockFunc
+	// BuyTicketFunc wacom
+	BuyTicketFunc
+	// AssetValueChangeFunc wacom
+	AssetValueChangeFunc
+	// MakeSwapFunc wacom
+	MakeSwapFunc
+	// RecallSwapFunc wacom
+	RecallSwapFunc
+	// TakeSwapFunc wacom
+	TakeSwapFunc
+)
+
+// ParseBig256 parses s as a 256 bit integer in decimal or hexadecimal syntax.
+// Leading zeros are accepted. The empty string parses as zero.
+func ParseBig256(s string) (*big.Int, bool) {
+	if s == "" {
+		return new(big.Int), true
+	}
+	var bigint *big.Int
+	var ok bool
+	if len(s) >= 2 && (s[:2] == "0x" || s[:2] == "0X") {
+		bigint, ok = new(big.Int).SetString(s[2:], 16)
+	} else {
+		bigint, ok = new(big.Int).SetString(s, 10)
+	}
+	if ok && bigint.BitLen() > 256 {
+		bigint, ok = nil, false
+	}
+	return bigint, ok
+}
+
+// TicketPrice  place holder for ticket price
+func TicketPrice() *big.Int {
+	return new(big.Int).Mul(big.NewInt(200), big.NewInt(1000000000000000000))
+}
+
+// FSNCallParam wacom
+type FSNCallParam struct {
+	Func FSNCallFunc
+	Data []byte
+}
+
+// GenAssetParam wacom
+type GenAssetParam struct {
+	Name      string
+	Symbol    string
+	Decimals  uint8
+	Total     *big.Int `json:",string"`
+	CanChange bool
+}
+
+// BuyTicketParam wacom
+type BuyTicketParam struct {
+	Start uint64
+	End   uint64
+}
+
+// SendAssetParam wacom
+type SendAssetParam struct {
+	AssetID Hash
+	To      Address
+	Value   *big.Int `json:",string"`
+}
+
+// AssetValueChangeParam wacom
+type AssetValueChangeParam struct {
+	AssetID Hash
+	To      Address
+	Value   *big.Int `json:",string"`
+	IsInc   bool
+}
+
+// TimeLockParam wacom
+type TimeLockParam struct {
+	Type      TimeLockType
+	AssetID   Hash
+	To        Address
+	StartTime uint64
+	EndTime   uint64
+	Value     *big.Int `json:",string"`
+}
+
+// MakeSwapParam wacom
+type MakeSwapParam struct {
+	FromAssetID   Hash
+	FromStartTime uint64  
+	FromEndTime   uint64
+	MinFromAmount *big.Int `json:",string"`
+	ToAssetID     Hash
+	ToStartTime   uint64
+	ToEndTime     uint64
+	MinToAmount   *big.Int `json:",string"`
+	SwapSize      *big.Int  `json:",string"`
+	Targes        []Address
+}
+
+// RecallSwapParam wacom
+type RecallSwapParam struct {
+	SwapID Hash
+}
+
+// TakeSwapParam wacom
+type TakeSwapParam struct {
+	SwapID Hash
+	Size   *big.Int `json:",string"`
+}
+
+// ToBytes wacom
+func (p *FSNCallParam) ToBytes() ([]byte, error) {
+	return rlp.EncodeToBytes(p)
+}
+
+// ToBytes wacom
+func (p *GenAssetParam) ToBytes() ([]byte, error) {
+	return rlp.EncodeToBytes(p)
+}
+
+// ToBytes wacom
+func (p *SendAssetParam) ToBytes() ([]byte, error) {
+	return rlp.EncodeToBytes(p)
+}
+
+// ToBytes wacom
+func (p *TimeLockParam) ToBytes() ([]byte, error) {
+	return rlp.EncodeToBytes(p)
+}
+
+// ToBytes wacom
+func (p *BuyTicketParam) ToBytes() ([]byte, error) {
+	return rlp.EncodeToBytes(p)
+}
+
+// ToBytes wacom
+func (p *AssetValueChangeParam) ToBytes() ([]byte, error) {
+	return rlp.EncodeToBytes(p)
+}
+
+// ToBytes wacom
+func (p *MakeSwapParam) ToBytes() ([]byte, error) {
+	return rlp.EncodeToBytes(p)
+}
+
+// ToBytes wacom
+func (p *RecallSwapParam) ToBytes() ([]byte, error) {
+	return rlp.EncodeToBytes(p)
+}
+
+// ToBytes wacom
+func (p *TakeSwapParam) ToBytes() ([]byte, error) {
+	return rlp.EncodeToBytes(p)
+}
+
+// ToAsset wacom
+func (p *GenAssetParam) ToAsset() Asset {
+	return Asset{
+		Name:      p.Name,
+		Symbol:    p.Symbol,
+		Decimals:  p.Decimals,
+		Total:     p.Total,
+		CanChange: p.CanChange,
+	}
+}
+
+// Asset wacom
+type Asset struct {
+	ID        Hash
+	Owner     Address
+	Name      string
+	Symbol    string
+	Decimals  uint8
+	Total     *big.Int `json:",string"`
+	CanChange bool
+}
+
+func (u *Asset) MarshalJSON() ([]byte, error) {
+	return json.Marshal(&struct {
+		ID        Hash
+		Owner     Address
+		Name      string
+		Symbol    string
+		Decimals  uint8
+		Total     string
+		CanChange bool
+	}{
+		ID:        u.ID,
+		Owner:     u.Owner,
+		Name:      u.Name,
+		Symbol:    u.Symbol,
+		Decimals:  u.Decimals,
+		Total:     u.Total.String(),
+		CanChange: u.CanChange,
+	})
+}
+
+// SystemAsset wacom
+var SystemAsset = Asset{
+	Name:     "Fusion",
+	Symbol:   "FSN",
+	Decimals: 18,
+	Total:    new(big.Int).Mul(big.NewInt(81920000), big.NewInt(1000000000000000000)),
+	ID:       SystemAssetID,
+}
+
+// Ticket wacom
+type Ticket struct {
+	ID         Hash
+	Owner      Address
+	Height     *big.Int  `json:",string"`
+	StartTime  uint64
+	ExpireTime uint64
+	Value      *big.Int  `json:",string"`
+	weight     *big.Int  `json:",string"`
+}
+
+// SetWeight wacom
+func (t *Ticket) SetWeight(value *big.Int) {
+	t.weight = value
+}
+
+// Weight wacom
+func (t *Ticket) Weight() *big.Int {
+	return t.weight
+}
+
+// Swap wacom
+type Swap struct {
+	ID            Hash
+	Owner         Address
+	FromAssetID   Hash
+	FromStartTime uint64
+	FromEndTime   uint64
+	MinFromAmount *big.Int  `json:",string"`
+	ToAssetID     Hash
+	ToStartTime   uint64
+	ToEndTime     uint64
+	MinToAmount   *big.Int `json:",string"`
+	SwapSize      *big.Int  `json:",string"`
+	Targes        []Address
+	Time          *big.Int // Provides information for TIME
+}
+
+// KeyValue wacom
+type KeyValue struct {
+	Key   string
+	Value interface{}
+}
+
+// NewKeyValue wacom
+func NewKeyValue(name string, v interface{}) *KeyValue {
+
+	return &KeyValue{Key: name, Value: v}
+
 }

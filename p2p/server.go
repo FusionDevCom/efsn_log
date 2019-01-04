@@ -25,15 +25,16 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	//"strings"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/mclock"
-	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/p2p/discover"
-	"github.com/ethereum/go-ethereum/p2p/discv5"
-	"github.com/ethereum/go-ethereum/p2p/nat"
-	"github.com/ethereum/go-ethereum/p2p/netutil"
+	"github.com/FusionFoundation/efsn/common"
+	"github.com/FusionFoundation/efsn/common/mclock"
+	"github.com/FusionFoundation/efsn/event"
+	"github.com/FusionFoundation/efsn/log"
+	"github.com/FusionFoundation/efsn/p2p/discover"
+	"github.com/FusionFoundation/efsn/p2p/discv5"
+	"github.com/FusionFoundation/efsn/p2p/nat"
+	"github.com/FusionFoundation/efsn/p2p/netutil"
 )
 
 const (
@@ -750,6 +751,13 @@ running:
 }
 
 func (srv *Server) protoHandshakeChecks(peers map[discover.NodeID]*Peer, inboundCount int, c *conn) error {
+	// name := truncateName(c.name)
+	// if !strings.HasPrefix(  name, "Efsn")  {
+	// 	srv.log.Debug("non efsn peer disconnecting", "name", name )
+	// 	return DiscUselessPeer
+	// }
+	// srv.log.Debug("connecting efsn", "name", name )
+	
 	// Drop connections with no matching protocols.
 	if len(srv.Protocols) > 0 && countMatchingProtocols(srv.Protocols, c.caps) == 0 {
 		return DiscUselessPeer
@@ -760,6 +768,7 @@ func (srv *Server) protoHandshakeChecks(peers map[discover.NodeID]*Peer, inbound
 }
 
 func (srv *Server) encHandshakeChecks(peers map[discover.NodeID]*Peer, inboundCount int, c *conn) error {
+
 	switch {
 	case !c.is(trustedConn|staticDialedConn) && len(peers) >= srv.MaxPeers:
 		return DiscTooManyPeers
